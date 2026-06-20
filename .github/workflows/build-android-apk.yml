@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,6 +23,8 @@ jobs:
           java-version: 17
 
       - uses: android-actions/setup-android@v3
+        with:
+          ndk-version: 27.1.12297006
 
       - uses: pnpm/action-setup@v4
         with:
@@ -39,7 +45,7 @@ jobs:
         working-directory: packages/happy-app
         env:
           APP_ENV: development
-        run: npx expo prebuild --platform android --non-interactive
+        run: pnpm exec expo prebuild --platform android --non-interactive
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -47,14 +53,14 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ hashFiles('packages/happy-app/android/**/*.gradle*', 'packages/happy-app/android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: gradle-${{ hashFiles('pnpm-lock.yaml', 'packages/happy-app/app.config.js') }}
           restore-keys: gradle-
 
       - name: Build debug APK
         working-directory: packages/happy-app/android
         env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -XX:+HeapDumpOnOutOfMemoryError"
-        run: ./gradlew assembleDebug --no-daemon
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g"
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
