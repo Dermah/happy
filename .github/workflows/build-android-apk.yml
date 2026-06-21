@@ -56,15 +56,29 @@ jobs:
           key: gradle-${{ hashFiles('pnpm-lock.yaml', 'packages/happy-app/app.config.js') }}
           restore-keys: gradle-
 
-      - name: Build debug APK
+      - name: Generate throwaway signing keystore
+        run: |
+          keytool -genkey -v \
+            -keystore release.keystore \
+            -alias release \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Test, O=Test, C=US"
+
+      - name: Build release APK
         working-directory: packages/happy-app/android
         env:
           APP_ENV: preview
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g"
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -Pandroid.injected.signing.store.file=${{ github.workspace }}/release.keystore \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=release \
+            -Pandroid.injected.signing.key.password=android
 
       - uses: actions/upload-artifact@v4
         with:
-          name: app-debug.apk
-          path: packages/happy-app/android/app/build/outputs/apk/debug/app-debug.apk
+          name: app-release.apk
+          path: packages/happy-app/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
