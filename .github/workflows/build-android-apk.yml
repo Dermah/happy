@@ -44,7 +44,7 @@ jobs:
       - name: Expo prebuild (Android)
         working-directory: packages/happy-app
         env:
-          APP_ENV: development
+          APP_ENV: preview
         run: pnpm exec expo prebuild --platform android --non-interactive
 
       - name: Cache Gradle
@@ -59,6 +59,7 @@ jobs:
       - name: Build debug APK
         working-directory: packages/happy-app/android
         env:
+          APP_ENV: preview
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g"
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
