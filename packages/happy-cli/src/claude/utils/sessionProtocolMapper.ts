@@ -420,6 +420,26 @@ function toToolArgs(input: unknown): Record<string, unknown> {
     return { input };
 }
 
+// Claude tool_result content is `string | Array<{ type: 'text', text: string }>`.
+function extractToolResultText(content: unknown): string | undefined {
+    if (typeof content === 'string') {
+        return content.length > 0 ? content : undefined;
+    }
+    if (Array.isArray(content)) {
+        const parts: string[] = [];
+        for (const part of content) {
+            if (part && typeof part === 'object' && (part as { type?: unknown }).type === 'text') {
+                const text = (part as { text?: unknown }).text;
+                if (typeof text === 'string' && text.length > 0) {
+                    parts.push(text);
+                }
+            }
+        }
+        return parts.length > 0 ? parts.join('\n') : undefined;
+    }
+    return undefined;
+}
+
 export function closeClaudeTurnWithStatus(
     state: ClaudeSessionProtocolState,
     status: SessionTurnEndStatus,
@@ -444,7 +464,6 @@ function mapClaudeLogMessageToSessionEnvelopesInternal(
     state: ClaudeSessionProtocolState,
 ): ClaudeMapperResult {
     const envelopes: SessionEnvelope[] = [];
-    const claudeUuid = pickUuid(message);
     const providerSubagent = resolveProviderSubagent(message, state);
     const subagent = providerSubagent
         ? getSessionSubagentIdForProviderSubagent(state, providerSubagent)
@@ -473,13 +492,6 @@ function mapClaudeLogMessageToSessionEnvelopesInternal(
         };
     }
 
-    if ((message as any).isCompactSummary) {
-        return {
-            currentTurnId: state.currentTurnId,
-            envelopes,
-        };
-    }
-
     if (message.type === 'assistant') {
         const turnId = ensureTurn(state, envelopes);
         maybeEmitSubagentStart(state, turnId, subagent, envelopes);
@@ -487,12 +499,12 @@ function mapClaudeLogMessageToSessionEnvelopesInternal(
 
         for (const block of blocks) {
             if (block.type === 'text' && typeof block.text === 'string') {
-                envelopes.push(createEnvelope('agent', { t: 'text', text: block.text }, { turn: turnId, subagent, claudeUuid }));
+                envelopes.push(createEnvelope('agent', { t: 'text', text: block.text }, { turn: turnId, subagent }));
                 continue;
             }
 
             if (block.type === 'thinking' && typeof block.thinking === 'string') {
-                envelopes.push(createEnvelope('agent', { t: 'text', text: block.thinking, thinking: true }, { turn: turnId, subagent, claudeUuid }));
+                envelopes.push(createEnvelope('agent', { t: 'text', text: block.thinking, thinking: true }, { turn: turnId, subagent }));
                 continue;
             }
 
@@ -546,26 +558,14 @@ function mapClaudeLogMessageToSessionEnvelopesInternal(
     }
 
     if (message.type === 'user') {
-        // SDK-injected synthetic user messages (e.g. the Skill tool feeds
-        // the skill prompt back to Claude as a 'user' message with
-        // isMeta=true so the model sees it but the human shouldn't).
-        // Without this skip the prompt body — easily 10–20k characters —
-        // gets emitted as an agent-text envelope and lands in the chat as
-        // a wall of text.
-        if (message.isMeta) {
-            return {
-                currentTurnId: state.currentTurnId,
-                envelopes,
-            };
-        }
         if (typeof message.message.content === 'string') {
             if (message.isSidechain) {
                 const turnId = ensureTurn(state, envelopes);
                 maybeEmitSubagentStart(state, turnId, subagent, envelopes);
-                envelopes.push(createEnvelope('agent', { t: 'text', text: message.message.content }, { turn: turnId, subagent, claudeUuid }));
+                envelopes.push(createEnvelope('agent', { t: 'text', text: message.message.content }, { turn: turnId, subagent }));
             } else {
                 closeTurn(state, 'completed', envelopes);
-                envelopes.push(createEnvelope('user', { t: 'text', text: message.message.content }, { claudeUuid }));
+                envelopes.push(createEnvelope('user', { t: 'text', text: message.message.content }));
             }
 
             return {
@@ -601,15 +601,19 @@ function mapClaudeLogMessageToSessionEnvelopesInternal(
                         maybeEmitSubagentStop(state, turnId, sessionSubagentForToolResult, envelopes);
                     }
                 }
+                const output = extractToolResultText((block as { content?: unknown }).content);
+                const isError = (block as { is_error?: unknown }).is_error === true;
                 envelopes.push(createEnvelope('agent', {
                     t: 'tool-call-end',
                     call: block.tool_use_id,
+                    ...(output !== undefined ? { output } : {}),
+                    ...(isError ? { isError: true } : {}),
                 }, { turn: turnId, subagent }));
                 continue;
             }
 
             if (block.type === 'text' && typeof block.text === 'string' && block.text.trim().length > 0) {
-                envelopes.push(createEnvelope('agent', { t: 'text', text: block.text }, { turn: turnId, subagent, claudeUuid }));
+                envelopes.push(createEnvelope('agent', { t: 'text', text: block.text }, { turn: turnId, subagent }));
             }
         }
 
